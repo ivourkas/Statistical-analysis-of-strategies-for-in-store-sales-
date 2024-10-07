@@ -1,0 +1,329 @@
+---
+title: "Inventory Simulation and Statistical Analysis"
+author: "Ioannis Vourkas"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Inventory problem.
+
+The manager of the Medical Supply store has come to you for advice on the following problem. This store sells mobility scooters (motorized wheelchairs) which are quite large and take up a lot of storage space in the store. 
+
+They observe that on average they only sell about 1 each week, so they don’t want to have too many in stock at any one time.
+
+On the other hand, these are high-profit items with a selling store price of \$1,699 and profit value of \$200. Therefore, if they don’t have one in stock when a customer comes in, the customer will go elsewhere. Moreover, it takes 5 days for a new one to be delivered by the distributor after they place an order.
+
+They are trying to decide on the best strategy for ordering the mobility scooters. They are considering these three in particular:
+
+- Strategy 1 (deliver when out of stock): Order a new scooter each time one is sold. Then they will never have more than one in stock at a time, so they won’t waste much storage space, but they may often be caught without any.  
+
+- Strategy 2 (fixed delivery schedule): Order a new scooter once a week, arriving 5 days later. Since they sell one a week on average it may be good to have one arrive each week on average. There’s probably less chance of being caught without one in stock, but if there are no customers for several weeks in a row, bulky scooters will accumulate and potentially overfill the storage capacity. Note that there is no mechanism to stop automatic delivery if the stock goes too high. Since customers arrive at the same average rate as new scooters, a high stock will tend to stay high.
+
+- Strategy 3 (hybrid delivery schedule): Order a new scooter once every N days, where N is larger than 7, and then to also order a new scooter whenever store runs out.
+
+The question is: which strategy is better? For example, the percentage of customers served is one important number to compare as this is an indicator of a reliable store. Having many customers is very important to any business and very often when a customer is coming for an expensive item, they will purchase other things as well. More important to the business, however, is the expected profit over time with different strategies. This depends not only on how many customers we serve or lose, but also on the cost of any overstock.
+
+This is a classic example of an inventory problem. Variants of this problem are constantly being solved by businesses, which often must decide on an ordering strategy for many different products simultaneously, even thousands for a grocery store, for example. 
+
+### Implementation Setup
+
+I) The simplest scenario to model customer arrival is to assume that number of customers coming to the store to buy the scooter is either 0 or 1 (i.e. Bernoulli RV with with p=1/7). This is not very realistic since some days we would expect 2 or even more to appear if they come at random times. Moreover, we might want to simulate a situation in which there are typically many customers each day, instead of only one customer every few days. This can be done using Poisson Distribution. The parameter $\lambda$ which will match our assumed rate of 1 customer per week on average should be set to $\lambda=1/7$ to represent 1/7 customers per day on average.
+
+II) Use variable ```order_when_out``` as a flag which determines whether to order a new scooter whenever we run out. The variable ```fixed_delivery``` determines whether there is a fixed schedule of deliveries, once every so many days. 
+
+Strategy 1: ```order_when_out <- 1```, ```fixed_delivery <- 0```
+
+Strategy 2: ```order_when_out <- 0```, ```fixed_delivery <- 7```
+
+Strategy 3: ```order_when_out <- 1```, ```fixed_delivery <- N```, where ```N``` should be a parameter set to a value greater than 7
+
+III) Your program should save information about what happens each day and keep track of statistics over the selected period: monthly, quarterly, etc. To make it easier, assume periods which are multiples of 7, such as 4 weeks to represent 'monthly', 13 weeks  for 'quarterly' and 52 weeks for 'yearly'. Save the following numbers computed by your simulation program: 
+
+-	number of customers
+
+-	number of scooters sold 
+
+-	fraction served (number of scooters sold/number of customers) 
+
+-	fraction of lost sales (customer came but scooter is not in stock) 
+
+-	number of overstocked scooters
+
+-	profit 
+
+Profit in this case consists of the assumed profit per sale, cost of losing a customer, and cost per day of overstock:
+
+
+```{r }
+profit_per_scooter <- 200 # profit from selling one scooter
+lost_sale_loss  <- 100    # loss from losing a customer
+overstock_loss  <- 5      # cost of each scooter overstock per day
+```
+
+### Visualization 
+
+In comparing the results of simulations with different strategies, we need to be able to reach sensible conclusions from a large quantity of 'experimental data'. Typically, we would also like to be able to quantify how confident we are in the conclusions we reach, how sensitive these conclusions are to the parameters we chose in the model, etc. This is the realm of statistics, and we will explore statistical estimates and ways to compare different models (strategies in this case) later. The first step of statistical analysis is almost always a visualization. 
+
+You should display the histograms of the simulated outputs to visualize the spread and the shape of possible outcomes.
+
+One of the important outcomes is the average profit observed for each strategy. If one strategy gives a larger average profit over many simulations than another strategy, it might be the better strategy. On the other hand, some strategies will give results with much greater variance between simulations than other strategies. In practice the owners of the store don’t really care about the average behavior over hundreds of simulations, they care about what will happen in the one real experience they will have with whatever strategy they adopt. The point of doing many simulations is to get some experience with what range of different outcomes they might reasonably expect to observe in practice. (Assuming of course that the model is good enough to match reality in some sense.)
+
+Start with plotting histograms of: 
+
+1. profit; 
+
+2. fraction served; 
+
+3. fraction of lost sales; 
+
+4. number of overstocked scooters. 
+
+The second part of this project will have statistical analysis of the simulated results and methods for comparing the different strategies. 
+In the second part, I assumed that strategy 4 is hybrid with the option of free delivery to client's home:Order a new scooter once every N days, where N is larger than 7, and then to also order a new scooter whenever store runs out. When stock=0 the stores offers free shipping to home option.
+
+
+```{r }
+# Load necessary libraries
+library(ggplot2)
+
+# Parameters
+profit_per_scooter <- 200
+home_delivery_profit<-200-75
+lost_sale_loss <- 100
+overstock_loss <- 5
+lambda_daily <- 1 / 7  # Average 1 customer per week
+simulation_days <- 13 * 7  # Simulate for 13 weeks
+
+# Function to simulate a single strategy
+simulate_inventory <- function(strategy, N = 0) {
+ 
+  scooters_in_stock <- 1  # Start with 1 scooter in stock
+  days_until_delivery <- 0 #Assuming a scooter arrives the first day
+  total_profit <- 0
+  total_customers <- 0
+  scooters_sold <- 0
+  lost_sales <- 0
+  overstocked_scooters<- 0
+
+  
+  for (day in 1:simulation_days) {
+    # Simulate customer arrivals using Poisson distribution
+    customers_today <- rpois(1, lambda_daily)
+    total_customers <- total_customers + customers_today
+    
+    # Sell scooters to customers if in stock
+      if (customers_today > 0 && scooters_in_stock > 0 ) {
+          scooters_sold_today <- min(customers_today, scooters_in_stock) #Determines how many scooters can be sold, ensuring you don't sell more scooters than you have in stock.
+          scooters_sold <- scooters_sold + scooters_sold_today
+          scooters_in_stock <- scooters_in_stock - scooters_sold_today
+          total_profit <- total_profit + scooters_sold_today * profit_per_scooter
+      } 
+    
+      else if (customers_today > 0 && scooters_in_stock == 0){
+        if(strategy %in% c(1,2,3)){
+          
+          lost_sales_today <- customers_today
+          lost_sales <- lost_sales + lost_sales_today
+          total_profit <- total_profit - lost_sales_today * lost_sale_loss
+        }
+        else if (strategy == 4) {
+        for (customer in 1:customers_today) {  # Loop for each customer
+          agree <- rbinom(1, 1, 0.5)
+          if (agree == 1) {
+            scooters_sold_today <- 1  # Only sell one scooter per customer
+            scooters_sold <- scooters_sold + scooters_sold_today
+            total_profit <- total_profit + scooters_sold_today * home_delivery_profit
+            #Note that there is no removal of the scooter from the stock as the scooter sold was not part of the store's stock
+          } 
+          else if (agree == 0) {
+            lost_sales_today <- 1  # Only lose one sale per customer
+            lost_sales <- lost_sales + lost_sales_today
+            total_profit <- total_profit - lost_sales_today * lost_sale_loss
+          }
+        }
+      }
+
+    }  
+    
+    # Check for fixed delivery schedules (Strategy 2 or 3)
+    if (strategy == 2 && day %% N == 0) { #Checks if the current day is a delivery day (every N days).
+      scooters_in_stock <- scooters_in_stock + 1
+    } else if (strategy == 3 && day %% N == 0) {
+      scooters_in_stock <- scooters_in_stock + 1
+    }
+     else if (strategy == 4 && day %% N == 0) {
+      scooters_in_stock <- scooters_in_stock + 1
+    }
+    
+   
+    # If out of stock, order (Strategy 1 or 3 or 4 if combined)
+    # Part 1: Check if we need to place an order
+    if (scooters_in_stock == 0 && strategy %in% c(1, 3, 4)) {
+      if (days_until_delivery == 0) {  # No current order in transit
+        days_until_delivery <- 5       # Set countdown to 5 days for new order
+        delivery_just_ordered <- TRUE  # Flag to track if order was just placed today
+      }
+    }
+
+    # Part 2: Handle the delivery countdown, but don't decrement on the same day the order is placed
+    if (days_until_delivery > 0) {
+      if (!delivery_just_ordered) {  # Skip decrementing on the day the order is placed
+      days_until_delivery <- days_until_delivery - 1  # Reduce the countdown
+      } 
+      else {
+      delivery_just_ordered <- FALSE  # Reset flag to allow decrementing next day
+      }
+
+      if (days_until_delivery == 0) {   # Delivery arrives after countdown reaches 0
+        scooters_in_stock <- scooters_in_stock + 1    # Increment stock
+      }
+    }
+    # Calculate overstock cost
+    if (scooters_in_stock > 1) {
+      total_profit <- total_profit - overstock_loss * (scooters_in_stock - 1)
+    }
+    
+    
+    
+  }
+   # Calculate overstock 
+  if (scooters_in_stock > 1) {
+    overstocked_scooters <- overstocked_scooters + (scooters_in_stock - 1) #Adds the excess scooters to the overstock count.
+    
+  }
+  
+  fraction_served <- if (total_customers > 0) scooters_sold / total_customers else 0
+  fraction_lost <- if (total_customers > 0) lost_sales / total_customers else 0
+  
+  return(c(total_profit, fraction_served, fraction_lost, overstocked_scooters))
+  #Returns the simulation results as a vector: total profit, fraction of customers served, fraction of customers lost, and the total number of overstocked scooters.
+}
+
+# Simulate each strategy
+strategies <- c("Strategy 1", "Strategy 2", "Strategy 3", "Strategy 4")
+results <- list()
+
+for (strategy in strategies) { #Runs 10,000 simulations for each strategy.
+  strategy_results <- replicate(10000, {
+    if (strategy == "Strategy 1") {
+      simulate_inventory(1)
+    } else if (strategy == "Strategy 2") {
+      simulate_inventory(2, N=7)
+    } else if (strategy == "Strategy 3") {
+      simulate_inventory(3, N = 10)  # Hybrid strategy with N = 10
+    }else if (strategy == "Strategy 4") {
+      simulate_inventory(4, N = 8)# Hybrid strategy with N = 8 and free home delivery option
+    }
+  })
+  results[[strategy]] <- t(strategy_results) #Transposes the results matrix so that each column corresponds to a simulation result
+  #print(summary(results[[strategy]]))
+}
+
+# Create histograms for each metric
+plot_histograms <- function(metric_index, metric_name) {
+  data <- data.frame(
+    value = unlist(lapply(results, function(x) x[, metric_index])),# applies a function to each element (x) in results. Each element is a matrix where rows represent simulations     and columns represent metrics like profit, fraction served, etc.
+    #x[, metric_index] extracts the values for the specified metric (column metric_index) from each strategy's result.
+    #unlist() converts the list of values into a single vector for the value column in the data frame.
+
+    
+    strategy = rep(names(results), each = 10000)
+    #repeats each strategy name 10,000 times (because there are 10,000 simulations per strategy). This creates the strategy column in the data frame, associating each value with     its corresponding strategy.
+  )
+  
+  ggplot(data, aes(x = value, fill = strategy)) + #The fill aesthetic differentiates between strategies by coloring the bars according to the strategy column.
+    geom_histogram(alpha = 1, bins = 20, position = 'dodge') + #alpha = 1 sets the opacity of the bars (1 means fully opaque), bins = 20 specifies that the histogram will have      20 bins, position = 'dodge' separates the bars by strategy so they don’t overlap. Instead, they are placed next to each other (side-by-side) for comparison.
+    labs(title = paste("Histogram of", metric_name),
+         x = metric_name,
+         y = "Frequency") +
+    theme_minimal()
+}
+# Plot the metrics
+plot_histograms(1, "Profit")
+plot_histograms(2, "Fraction of Customers Served")
+plot_histograms(3, "Fraction of Lost Sales")
+plot_histograms(4, "Overstocked Scooters")
+
+```
+
+### Hypothesis Testing
+
+```{r}
+# Function to create side-by-side boxplots for a base strategy versus one other strategy
+compare_strategies_boxplot <- function(base_strategy, comparison_strategy) {
+  data <- data.frame(
+    Profit = c(results[[base_strategy]][, 1], results[[comparison_strategy]][, 1]), # Extract profit for base and comparison strategies
+    Strategy = rep(c(base_strategy, comparison_strategy), each = 10000) # Repeat each strategy name for 10,000 simulations
+  )
+  
+  # Define custom colors for the strategies
+  color_palette <- c("Strategy 1" = "salmon", "Strategy 2" = "green", 
+                     "Strategy 3" = "blue", "Strategy 4" = "purple")
+
+  ggplot(data, aes(x = Strategy, y = Profit, fill = Strategy)) +
+    geom_boxplot() +
+    scale_fill_manual(values = color_palette) + # Use the custom color palette
+    labs(title = paste("Comparison of Profit: ", base_strategy, " vs ", comparison_strategy),
+         x = "Strategy",
+         y = "Profit") +
+    theme_minimal()
+}
+
+# Compare Strategy 1 with Strategy 2
+compare_strategies_boxplot("Strategy 1", "Strategy 2")
+
+# Compare Strategy 1 with Strategy 3
+compare_strategies_boxplot("Strategy 1", "Strategy 3")
+
+# Compare Strategy 1 with Strategy 4
+compare_strategies_boxplot("Strategy 1", "Strategy 4")
+
+```
+
+Let's assume that the mean profit of Strategy 1 is is greater than or equal to the mean profit of each of the other 3 strategies(null hypothesis), which according to the boxplots should be obvously rejected. Let's see though...
+
+I have assumed that the underlying populations are normal, or that we have enough samples so that the central limit theorem takes hold.I have also assumed that there are no outliers, which, judging from the boxplots is not the case here. Outliers can greatly impact the test results and should be removed from the data prior to using the test. 
+
+```{r}
+
+# Perform t-test comparing Strategy 1 and Strategy 2
+t_test_result_1_2 <- t.test(results[["Strategy 1"]][, 1], results[["Strategy 2"]][, 1], alternative = "less", var.equal = FALSE)
+print(t_test_result_1_2)
+
+# Interpret results for Strategy 2
+if (t_test_result_1_2$p.value < 0.05) {
+  cat("Null hypothesis is rejected! The mean profit of Strategy 1 is less than that of Strategy 2.\n")
+} else {
+  cat("Fail to reject the null hypothesis! Not enough evidence that the mean profit of Strategy 1 is less than that of Strategy 2.\n")
+}
+
+# Repeat for Strategy 3
+t_test_result_1_3 <- t.test(results[["Strategy 1"]][, 1], results[["Strategy 3"]][, 1], alternative = "less", var.equal = FALSE)
+print(t_test_result_1_3)
+
+# Interpret results for Strategy 3
+if (t_test_result_1_3$p.value < 0.05) {
+  cat("Null Hypothesis is rejected! The mean profit of Strategy 1 is less than that of Strategy 3.\n")
+} else {
+  cat("Fail to reject the null hypothesis! Not enough evidence that the mean profit of Strategy 1 is less than that of Strategy 3.\n")
+}
+
+# Repeat for Strategy 4
+t_test_result_1_4 <- t.test(results[["Strategy 1"]][, 1], results[["Strategy 4"]][, 1], alternative = "less", var.equal = FALSE)
+print(t_test_result_1_4)
+
+# Interpret results for Strategy 4
+if (t_test_result_1_4$p.value < 0.05) {
+  cat("Null Hypothesis is rejected! The mean profit of Strategy 1 is less than that of Strategy 4.\n")
+} else {
+  cat("Fail to reject the null hypothesis! Not enough evidence that the mean profit of Strategy 1 is less than that of Strategy 4.\n")
+}
+
+```
+
+Therefore, as we have estimated from the boxplots, the mean profit of Strategy 1 is less than the mean profit of each of the other three strategies 
